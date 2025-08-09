@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Tiny High-Quality Scene — Walkaround</title>
+  <style>
+    html,body{height:100%;margin:0;background:#050509;color:#fff;font-family:Inter,system-ui,Segoe UI,Roboto,Arial}
+    #ui{position:absolute;left:12px;top:12px;z-index:2;pointer-events:none}
+    .panel{background:rgba(0,0,0,0.35);backdrop-filter:blur(6px);padding:10px;border-radius:8px;pointer-events:auto}
+    #canvas{display:block;width:100%;height:100%}
+    a{color:#9be}
+    .hint{opacity:0.9;font-size:13px}
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <div class="panel">
+      <div style="font-weight:700;font-size:14px">Tiny High-Quality Scene</div>
+      <div class="hint">WASD to move, mouse to look, Space to jump, P to toggle postprocessing</div>
+      <div style="margin-top:8px;font-size:12px">Designed for small download size — uses procedural materials and GPU effects.</div>
+    </div>
+  </div>
+  <canvas id="canvas"></canvas>
+
+  <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js';
+    import { PointerLockControls } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/controls/PointerLockControls.js';
+    import { EffectComposer } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/postprocessing/UnrealBloomPass.js';
+
+    const canvas = document.getElementById('canvas');
+    const renderer = new THREE.WebGLRenderer({canvas, antialias:true, powerPreference:'high-performance'});
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x081018, 0.02);
+
+    const camera = new THREE.PerspectiveCamera(75, 2, 0.1, 200);
+    camera.position.set(0,1.7,5);
+
+    // Lights
+    const dir = new THREE.DirectionalLight(0xfff3e7, 1.2);
+    dir.position.set(5,10,2);
+    dir.castShadow = true;
+    dir.shadow.mapSize.set(2048,2048);
+    dir.shadow.camera.left = -10; dir.shadow.camera.right=10; dir.shadow.camera.top=10; dir.shadow.camera.bottom=-10;
+    scene.add(dir);
+
+    const hemi = new THREE.HemisphereLight(0x88aaff, 0x20202a, 0.8);
+    scene.add(hemi);
+
+    // Ground
+    const groundGeo = new THREE.PlaneGeometry(200,200, 64,64);
+    const groundMat = new THREE.MeshStandardMaterial({color:0x0f1b22, roughness:0.6, metalness:0.05});
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI/2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // Rocks
+    const rockMat = new THREE.MeshStandardMaterial({color:0x7892a8, roughness:0.45, metalness:0.02});
+    for(let i=0;i<12;i++){
+      const g = new THREE.DodecahedronGeometry(0.3+Math.random()*1.2, 0);
+      const m = new THREE.Mesh(g, rockMat);
+      m.castShadow = true;
+      m.position.set((Math.random()-0.5)*20, 0.15, (Math.random()-0.5)*20);
+      m.rotation.set(Math.random()*2,Math.random()*2,Math.random()*2);
+      m.scale.setScalar(0.6+Math.random()*1.6);
+      scene.add(m);
+    }
+
+    // Orb centerpiece
+    const orbGeo = new THREE.SphereGeometry(1.2, 64, 64);
+    const orbMat = new THREE.MeshPhysicalMaterial({
+      color:0x5fb8ff,
+      metalness:0.9,
+      roughness:0.05,
+      clearcoat:0.6,
+      clearcoatRoughness:0.02
+    });
+    const orb = new THREE.Mesh(orbGeo, orbMat);
+    orb.position.set(0,1.2,0);
+    orb.castShadow = true;
+    scene.add(orb);
+
+    // Rings
+    const ringGeo = new THREE.TorusGeometry(2.2, 0.08, 30, 200);
+    const ringMat = new THREE.MeshStandardMaterial({color:0xff9c6b, emissive:0x331000, roughness:0.2});
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.rotation.x = Math.PI/2;
+    ring.position.y = 1.2;
+    scene.add(ring);
+
+    // Distant hills
+    const hillMat = new THREE.MeshStandardMaterial({color:0x091826, roughness:0.9});
+    for(let i=0;i<6;i++){
+      const g = new THREE.ConeGeometry(4+Math.random()*8, 6+Math.random()*8, 6);
+      const m = new THREE.Mesh(g, hillMat);
+      m.position.set((i-3.5)*12, -1.5, -20 - Math.random()*40);
+      m.rotation.y = Math.random()*Math.PI;
+      scene.add(m);
+    }
+
+    // Controls
+    const controls = new PointerLockControls(camera, document.body);
+    let velocity = new THREE.Vector3();
+    let direction = new THREE.Vector3();
+    const onKey = {};
+    document.addEventListener('click', ()=>{ controls.lock(); });
+    document.addEventListener('keydown', (e)=>{
+      onKey[e.code]=true;
+      if(e.code==='KeyP') togglePost();
+    });
+    document.addEventListener('keyup', (e)=>{ onKey[e.code]=false; });
+
+    // Postprocessing composer with bloom
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.8, 0.6, 0.1);
+    bloomPass.threshold = 0.2; bloomPass.strength = 0.8; bloomPass.radius = 0.5;
+    composer.addPass(bloomPass);
+    let usePost = true;
+    function togglePost(){ usePost = !usePost; }
+
+    // Resize handler
+    function resize(){
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w,h);
+      camera.aspect = w/h; camera.updateProjectionMatrix();
+      composer.setSize(w,h);
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // Animation loop
+    const clock = new THREE.Clock();
+    function animate(){
+      const dt = Math.min(0.05, clock.getDelta());
+
+      orb.rotation.y += dt*0.4;
+      ring.rotation.z += dt*0.6;
+
+      const speed = 4.0;
+      direction.set(0,0,0);
+      if(onKey['KeyW']) direction.z -= 1;
+      if(onKey['KeyS']) direction.z += 1;
+      if(onKey['KeyA']) direction.x -= 1;
+      if(onKey['KeyD']) direction.x += 1;
+      direction.normalize();
+
+      if(controls.isLocked){
+        const forward = new THREE.Vector3();
+        camera.getWorldDirection(forward);
+        forward.y = 0; forward.normalize();
+        const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0,1,0), forward).normalize();
+        velocity.x = (right.x*direction.x + forward.x*direction.z) * speed;
+        velocity.z = (right.z*direction.x + forward.z*direction.z) * speed;
+
+        controls.getObject().position.x += velocity.x * dt;
+        controls.getObject().position.z += velocity.z * dt;
+        controls.getObject().position.y = 1.7;
+      }
+
+      if(usePost) composer.render(); else renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+    animate();
+
+    console.log('Tiny High-Quality Scene loaded. Controls: click to lock, WASD to move, P to toggle postprocessing');
+  </script>
+</body>
+</html>
